@@ -2,7 +2,7 @@ import pandas as pd, requests, time, traceback
 from pathlib import Path
 
 # ---------- 1. 設定 ----------
-API_KEY = "AIzaSyCs9Y5RQJXJXnRjAHi9Wh7103qfC5C5aDI"     # ← 本物キーを''や""で包んで1行に!
+API_KEY = "API_KEY = "AIzaSyAWnSasfPSgL7DIDdPKfiScsC7VVqHJuSk"     # ← 本物キーを''や""で包んで1行に!
 input_file  = "許せない作品リスト - JKハルは異世界で娼婦になった.csv"
 text_column = "レビュー本文"
 output_file = Path(input_file).with_stem("negapozi_" + Path(input_file).stem)
