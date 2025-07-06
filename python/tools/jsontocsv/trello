@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+# json_to_csv.py
+
+import json
+import csv
+import sys
+
+def trello_json_to_csv(json_path, csv_path):
+    """
+    Trello ボードの JSON エクスポートからカード情報を抽出し、CSV に保存する。
+    - json_path: 入力 JSON ファイルパス
+    - csv_path: 出力 CSV ファイルパス
+    """
+
+    with open(json_path, encoding='utf-8') as f:
+        data = json.load(f)
+
+    # 「カード」情報を一意にまとめる
+    cards = {card['id']: card for card in data.get('cards', [])}
+
+    # リスト ID → リスト名 のマップを作成
+    lists = {lst['id']: lst['name'] for lst in data.get('lists', [])}
+
+    # CSV のヘッダー項目
+    fieldnames = [
+        'id', 'name', 'desc', 'due', 'url', 'list_name'
+    ]
+
+    with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for card in cards.values():
+            writer.writerow({
+                'id':         card.get('id', ''),
+                'name':       card.get('name', ''),
+                'desc':       card.get('desc', ''),
+                'due':        card.get('due', ''),
+                'url':        card.get('shortUrl', ''),
+                'list_name':  lists.get(card.get('idList', ''), '')
+            })
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print(f"使い方: {sys.argv[0]} input.json output.csv")
+        sys.exit(1)
+    trello_json_to_csv(sys.argv[1], sys.argv[2])
+    print("✅ CSV にエクスポート完了:", sys.argv[2])
