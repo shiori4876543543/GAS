@@ -1,0 +1,293 @@
+import os
+import json
+from datetime import date
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QTextEdit, QToolBar, QAction,
+    QFileDialog, QMessageBox, QListWidget, QHBoxLayout, QInputDialog,
+    QListWidgetItem, QCheckBox, QLabel, QDialog, QPushButton, QDialogButtonBox
+)
+from PyQt5.QtGui import QTextCursor, QTextCharFormat, QFont, QColor
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QIcon
+import re
+from markdown import markdown  # 追加
+
+SAVE_DIR = "notes_pyqt"
+INDEX_FILE = "memo_index_with_tags.json"
+
+ALL_TAGS = ["仕事", "学び", "アイデア", "振り返り", "雑記", "日報"]
+
+DAILY_TEMPLATE = """# {date} の日報
+
+## 今日の時間割
+-
+
+## 今日のタスク一覧
+-
+
+## 仕事でやったこと
+- 
+
+## 勉強したこと・読んだもの
+- 
+
+## 課題・悩んでいること
+- 
+
+## 今日の気持ち・気づき
+-
+
+## 今日の気分・体調
+- 
+
+## 感想・気づき
+-
+
+## 明日の予定・TODO
+- 
+"""
+
+class TagSelector(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("タグ選択")
+        self.layout = QVBoxLayout()
+        self.checkboxes = []
+
+        for tag in ALL_TAGS:
+            cb = QCheckBox(tag)
+            self.layout.addWidget(cb)
+            self.checkboxes.append(cb)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.layout.addWidget(self.buttons)
+        self.setLayout(self.layout)
+
+    def selected_tags(self):
+        return [cb.text() for cb in self.checkboxes if cb.isChecked()]
+
+class MarkdownEditor(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("しおりメモ - タグ＆日報テンプレ＆Markdownプレビュー")
+        self.setGeometry(100, 100, 1200, 700)
+
+        self.setWindowIcon(QIcon("shiori_icon_new.ico"))  # ←★この行をここに追加！
+
+        main_layout = QHBoxLayout()
+        self.setLayout(main_layout)
+
+        self.sidebar = QListWidget()
+        self.sidebar.itemClicked.connect(self.load_selected_note)
+        main_layout.addWidget(self.sidebar, 2)
+
+        editor_container = QWidget()
+        editor_layout = QVBoxLayout()
+        editor_container.setLayout(editor_layout)
+        main_layout.addWidget(editor_container, 8)
+
+        toolbar = QToolBar()
+        editor_layout.addWidget(toolbar)
+
+        bold_action = QAction("B", self)
+        bold_action.triggered.connect(self.make_bold)
+        toolbar.addAction(bold_action)
+
+        italic_action = QAction("I", self)
+        italic_action.triggered.connect(self.make_italic)
+        toolbar.addAction(italic_action)
+
+        checklist_action = QAction("✅", self)
+        checklist_action.triggered.connect(self.toggle_checklist)
+        toolbar.addAction(checklist_action)
+
+        link_action = QAction("🔗", self)
+        link_action.triggered.connect(self.insert_link)
+        toolbar.addAction(link_action)
+
+        table_action = QAction("📊", self)
+        table_action.triggered.connect(self.insert_table)
+        toolbar.addAction(table_action)
+
+        new_action = QAction("🆕 新規", self)
+        new_action.triggered.connect(self.new_note)
+        toolbar.addAction(new_action)
+
+        save_action = QAction("💾 保存", self)
+        save_action.triggered.connect(self.save_note)
+        toolbar.addAction(save_action)
+
+        self.editor = QTextEdit()
+        font = QFont("Yu Gothic", 12)
+        self.editor.setFont(font)
+        editor_layout.addWidget(self.editor)
+
+        self.current_title = None
+        self.current_tags = []
+        self.load_index()
+
+    def make_bold(self):
+        cursor = self.editor.textCursor()
+        cursor.insertText("**" + cursor.selectedText() + "**")
+
+    def make_italic(self):
+        cursor = self.editor.textCursor()
+        cursor.insertText("*" + cursor.selectedText() + "*")
+
+    def toggle_checklist(self):
+        cursor = self.editor.textCursor()
+        cursor.select(QTextCursor.LineUnderCursor)
+        line = cursor.selectedText()
+
+        if "- [ ]" in line:
+            line = line.replace("- [ ]", "- [x]", 1)
+        elif "- [x]" in line:
+            line = line.replace("- [x]", "- [ ]", 1)
+        else:
+            line = "- [ ] " + line
+
+        cursor.insertText(line)
+
+    def insert_link(self):
+        text, ok1 = QInputDialog.getText(self, "リンクの表示名", "表示名:")
+        if not ok1 or not text:
+            return
+        url, ok2 = QInputDialog.getText(self, "リンクのURL", "URL:")
+        if not ok2 or not url:
+            return
+        self.editor.textCursor().insertText(f"[{text}]({url})")
+
+    def insert_table(self):
+        rows, ok1 = QInputDialog.getInt(self, "行数", "行数:", min=1, max=20)
+        if not ok1:
+            return
+        cols, ok2 = QInputDialog.getInt(self, "列数", "列数:", min=1, max=10)
+        if not ok2:
+            return
+
+        header = "| " + " | ".join([f"Header{i+1}" for i in range(cols)]) + " |"
+        separator = "| " + " | ".join(["---"] * cols) + " |"
+        body = "\n".join(["| " + " | ".join(["   "] * cols) + " |" for _ in range(rows)])
+
+        table_md = f"{header}\n{separator}\n{body}"
+        self.editor.textCursor().insertText(table_md)
+
+    def new_note(self):
+        dlg = TagSelector(self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        selected_tags = dlg.selected_tags()
+        today = date.today().isoformat()
+        title = f"{today}_note"
+
+        self.current_title = title
+        self.current_tags = selected_tags
+
+        if "日報" in selected_tags:
+            self.render_markdown(DAILY_TEMPLATE.format(date=today))
+        else:
+            self.editor.clear()
+
+    def save_note(self):
+        if not os.path.exists(SAVE_DIR):
+            os.makedirs(SAVE_DIR)
+
+        if not self.current_title:
+            QMessageBox.warning(self, "保存失敗", "まず新規作成してください")
+            return
+
+        filename = os.path.join(SAVE_DIR, f"{self.current_title}.md")
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(self.editor.toPlainText())
+
+        self.update_index(self.current_title, self.current_tags)
+        self.load_index()
+        QMessageBox.information(self, "保存", f"{self.current_title} を保存しました！")
+
+    def update_index(self, title, tags):
+        try:
+            with open(INDEX_FILE, "r", encoding="utf-8") as f:
+                index = json.load(f)
+        except:
+            index = []
+
+        exists = False
+        for item in index:
+            if item["title"] == title:
+                item["tags"] = tags
+                exists = True
+                break
+        if not exists:
+            index.append({"title": title, "tags": tags})
+
+        with open(INDEX_FILE, "w", encoding="utf-8") as f:
+            json.dump(index, f, indent=2, ensure_ascii=False)
+
+    def load_selected_note(self, item):
+        title = item.text().split(" [")[0]
+        filepath = os.path.join(SAVE_DIR, f"{title}.md")
+        if os.path.exists(filepath):
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+                self.render_markdown(content)
+                self.current_title = title
+
+    def load_index(self):
+        self.sidebar.clear()
+        if os.path.exists(INDEX_FILE):
+            with open(INDEX_FILE, "r", encoding="utf-8") as f:
+                index = json.load(f)
+                for item in index:
+                    tag_display = ", ".join(item["tags"]) if item.get("tags") else ""
+                    display = f"{item['title']} [{tag_display}]" if tag_display else item['title']
+                    self.sidebar.addItem(display)
+
+    def render_markdown(self, text):
+        html = markdown(text, extensions=['extra'])
+        self.editor.setHtml(html)
+
+if __name__ == '__main__':
+    app = QApplication([])
+    window = MarkdownEditor()
+    window.setStyleSheet("""
+        QWidget {
+            background-color: #2b2b2b;
+            color: #f0f0f0;
+            font-family: 'Yu Gothic', sans-serif;
+            font-size: 14px;
+        }
+        QTextEdit {
+            background-color: #3c3f41;
+            color: #ffffff;
+            border: 1px solid #555;
+        }
+        QListWidget {
+            background-color: #2b2b2b;
+            color: #ffffff;
+            border: 1px solid #444;
+        }
+        QToolBar {
+            background-color: #212121;
+            border: none;
+        }
+        QPushButton, QToolButton {
+            background-color: #444;
+            color: #fff;
+            border: 1px solid #666;
+            padding: 5px;
+        }
+        QPushButton:hover, QToolButton:hover {
+            background-color: #555;
+        }
+        QDialog {
+            background-color: #2b2b2b;
+        }
+        QCheckBox, QLabel {
+            color: #ffffff;
+        }
+    """)
+    window.show()
+    app.exec_()
