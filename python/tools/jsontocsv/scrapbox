@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+# scrapbox_json_to_csv.py
+import json, csv, sys, datetime
+
+def scrapbox_json_to_csv(json_path: str, csv_path: str) -> None:
+    """
+    Scrapbox のプロジェクト JSONエクスポートをページ単位で CSV に変換する
+    - json_path : 入力 JSON パス
+    - csv_path  : 出力 CSV パス
+    """
+    with open(json_path, encoding='utf-8') as f:
+        data = json.load(f)
+
+    pages = data.get('pages', [])
+    fieldnames = [
+        'id',            # ページ ID
+        'title',         # タイトル
+        'created',       # 作成日時 (ISO8601)
+        'updated',       # 更新日時 (ISO8601)
+        'line_count',    # 行数
+        'body'           # 本文（改行結合）
+    ]
+
+    def to_iso(ts):
+        return datetime.datetime.utcfromtimestamp(ts).isoformat() if ts else ''
+
+    with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for p in pages:
+            lines = p.get('lines', [])
+            writer.writerow({
+                'id'        : p.get('id', ''),
+                'title'     : p.get('title', ''),
+                'created'   : to_iso(p.get('created')),
+                'updated'   : to_iso(p.get('updated')),
+                'line_count': len(lines),
+                'body'      : '\n'.join(lines)
+            })
+
+    print(f'✅ 変換完了: {csv_path}')
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print(f'使い方: {sys.argv[0]} input.json output.csv')
+        sys.exit(1)
+    scrapbox_json_to_csv(sys.argv[1], sys.argv[2])
